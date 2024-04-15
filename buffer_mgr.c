@@ -28,15 +28,17 @@ typedef struct BM_PageFrame {
 
 
 typedef struct BM_Metadata {
+     // an array of frames
+    BM_PageFrame *pageFrames;
+    // used to treat *pageFrames as a queue
     // a page table that associates the a page ID with an index in pageFrames
     HT_TableHandle pageTable;
     // increments everytime a page is accessed (used for frame's timeStamp)
     TimeStamp timeStamp;
     // the file handle
     SM_FileHandle pageFile;
-    // an array of frames
-    BM_PageFrame *pageFrames;
-    // used to treat *pageFrames as a queue
+   
+    
     //statistics
     int numberRead;
     int numberWrite;
@@ -55,7 +57,47 @@ TimeStamp getTimeStamp(BM_Metadata *metadata);
 BM_PageFrame *getAfterEviction(BM_BufferPool *const bm, int framedIndex);
 
 /* Buffer Manager Interface Pool Handling */
+// RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName, 
+// 		const int numPages, ReplacementStrategy strategy,
+// 		void *stratData)
+// {
+//     // initialize the metadata
+//     BM_Metadata *metadata = (BM_Metadata *)malloc(sizeof(BM_Metadata));
+//     HT_TableHandle *pageTable = &(metadata->pageTable);
+//     metadata->timeStamp = 0;
 
+//     // start the queue from the last element as it gets incremented by one and modded 
+//     // at the start of each call of replacementFIFO
+//     metadata->queuedIndex = bm->numPages - 1;
+//     metadata->numberRead = 0;
+//     metadata->numberWrite = 0;
+//     RC result = openPageFile((char *)pageFileName, &(metadata->pageFile));
+
+//     switch (result) {
+//         case RC_OK:
+//             initHashTable(pageTable, PAGE_TABLE_SIZE);
+//             metadata->pageFrames = (BM_PageFrame *)malloc(sizeof(BM_PageFrame) * numPages);
+//             for (int i = 0; i < numPages; i++)
+//             {
+//                 metadata->pageFrames[i].framedIndex = i;
+//                 metadata->pageFrames[i].data = (char *)malloc(PAGE_SIZE);
+//                 metadata->pageFrames[i].fixedCount = 0;
+//                 metadata->pageFrames[i].dirty = false;
+//                 metadata->pageFrames[i].occupied = false;
+//                 metadata->pageFrames[i].timeStamp = getTimeStamp(metadata);
+//             }
+//             bm->mgmtData = (void *)metadata;
+//             bm->numPages = numPages;
+//             bm->pageFile = (char *)&(metadata->pageFile);
+//             bm->strategy = strategy;
+//             return RC_OK;
+
+//         default:
+//             // Handle all other cases where the page file cannot be opened
+//             bm->mgmtData = NULL;
+//             return result;
+//     }
+// }
 RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName, 
 		const int numPages, ReplacementStrategy strategy,
 		void *stratData) 
@@ -102,7 +144,7 @@ RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName,
     }
 
     // Initialize buffer pool fields
-    bm->pageFile = pageFileName; // Store the page file name
+    bm->pageFile = (char *)&(metadata->pageFile); // Store the page file name
     bm->numPages = numPages;
     bm->strategy = strategy;
     bm->mgmtData = (void *)metadata;
@@ -144,9 +186,10 @@ RC shutdownBufferPool(BM_BufferPool *const bm)
         closePageFile(&(metadata->pageFile));
 
         // free the pageFrames array and metadata
+        freeHashTable(pageTable);
         free(metadata);
         free(pageFrames);
-        freeHashTable(pageTable);
+        
         bm->mgmtData = NULL; // Clear management data pointer
         return RC_OK;
     }
