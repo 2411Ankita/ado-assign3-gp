@@ -3,12 +3,15 @@
 #include "hash_table.h"
 #include "storage_mgr.h"
 #include <stdlib.h>
-
+#include <stdio.h>
 
 /* Additional Definitions */
 
 #define PAGE_TABLE_SIZE 256
+#define RC_OK 0
 
+
+typedef unsigned int TimeStamp;
 typedef struct BM_PageFrame {
     // the frame's buffer
     char* data;
@@ -22,7 +25,7 @@ typedef struct BM_PageFrame {
     bool dirty; 
 } BM_PageFrame; 
 
-typedef unsigned int TimeStamp;
+
 
 typedef struct BM_Metadata {
     // a page table that associates the a page ID with an index in pageFrames
@@ -41,57 +44,75 @@ typedef struct BM_Metadata {
 } BM_Metadata;
 
 /* Declaration */
-BM_PageFrame *replacementLRU(BM_BufferPool *const bm);
 BM_PageFrame *replacementFIFO(BM_BufferPool *const bm);
-// it helps to evict frame at framedIndex & return new empty frame
-BM_PageFrame *getAfterEviction(BM_BufferPool *const bm, int framedIndex);
+BM_PageFrame *replacementLRU(BM_BufferPool *const bm);
+
+
+
 // use the helper to increase the pool global timestamp & return it
 TimeStamp getTimeStamp(BM_Metadata *metadata);
+// it helps to evict frame at framedIndex & return new empty frame
+BM_PageFrame *getAfterEviction(BM_BufferPool *const bm, int framedIndex);
 
 /* Buffer Manager Interface Pool Handling */
 
-RC initBufferPool(BM_BufferPool *const bm, void *stratData, const char *const pageFileName, 
-		ReplacementStrategy strategy, const int numPages)
+RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName, 
+		const int numPages, ReplacementStrategy strategy,
+		void *stratData) 
 {
-    // initialize this metadata
+    // Initialize metadata
     BM_Metadata *metadata = (BM_Metadata *)malloc(sizeof(BM_Metadata));
+    if (metadata == NULL) {
+        return RC_BUFFER_POOL_INIT_FAILED; // Failed to allocate memory for metadata
+    }
     HT_TableHandle *pageTable = &(metadata->pageTable);
-    // begin queue from last element when it will increment by one and modded 
-    // at the start of each call of replacementFIFO
-    metadata->queuedIndex = bm->numPages - 1;
+    metadata->queuedIndex = numPages - 1; // Begin queue from last element
     metadata->numberWrite = 0;
     metadata->timeStamp = 0;
     metadata->numberRead = 0;
    
+    // Open the page file
     RC result = openPageFile((char *)pageFileName, &(metadata->pageFile));
-
-    switch (result) {
-        case RC_OK:
-            metadata->pageFrames = (BM_PageFrame *)malloc(sizeof(BM_PageFrame) * numPages);
-            initHashTable(pageTable, PAGE_TABLE_SIZE);
-            for (int i = 0; i < numPages; i++)
-            {
-                metadata->pageFrames[i].timeStamp = getTimeStamp(metadata);
-                metadata->pageFrames[i].framedIndex = i;
-                metadata->pageFrames[i].occupied = false;
-                metadata->pageFrames[i].data = (char *)malloc(PAGE_SIZE);
-                metadata->pageFrames[i].dirty = false;
-                metadata->pageFrames[i].fixedCount = 0;
-            }
-            bm->pageFile = (char *)&(metadata->pageFile);
-            bm->numPages = numPages;
-            bm->strategy = strategy;
-            bm->mgmtData = (void *)metadata;
-            return RC_OK;
-
-        default:
-            // Handle all other cases where a page file can not be opened
-            bm->mgmtData = NULL;
-            return result;
+    if (result != RC_OK) {
+        free(metadata);
+        bm->mgmtData = NULL;
+        return result; // Return the error from openPageFile
     }
+
+    // Initialize page frames
+    metadata->pageFrames = (BM_PageFrame *)malloc(sizeof(BM_PageFrame) * numPages);
+    if (metadata->pageFrames == NULL) {
+        free(metadata);
+        closePageFile(&(metadata->pageFile));
+        bm->mgmtData = NULL;
+        return RC_BUFFER_POOL_INIT_FAILED; // Failed to allocate memory for page frames
+    }
+
+    // Initialize hash table
+    initHashTable(pageTable, PAGE_TABLE_SIZE);
+
+    // Initialize each page frame
+    for (int i = 0; i < numPages; i++) {
+        metadata->pageFrames[i].timeStamp = getTimeStamp(metadata);
+        metadata->pageFrames[i].framedIndex = i;
+        metadata->pageFrames[i].occupied = false;
+        metadata->pageFrames[i].data = (char *)malloc(PAGE_SIZE);
+        metadata->pageFrames[i].dirty = false;
+        metadata->pageFrames[i].fixedCount = 0;
+    }
+
+    // Initialize buffer pool fields
+    bm->pageFile = pageFileName; // Store the page file name
+    bm->numPages = numPages;
+    bm->strategy = strategy;
+    bm->mgmtData = (void *)metadata;
+
+    return RC_OK;
 }
 
+
 RC shutdownBufferPool(BM_BufferPool *const bm)
+
 {
     // make sure the metadata was successfully initialized
     if (bm->mgmtData != NULL) 
@@ -101,7 +122,7 @@ RC shutdownBufferPool(BM_BufferPool *const bm)
         HT_TableHandle *pageTable = &(metadata->pageTable);
         
         // It is an error to shutdown a buffer pool that has pinned pages
-        int i = 0; // Initialize loop counter for while loop
+        int i = 0;// Initialize loop counter for while loop
         while (i < bm->numPages)
         {
             // Increment the loop counter
@@ -111,7 +132,7 @@ RC shutdownBufferPool(BM_BufferPool *const bm)
         
         forceFlushPool(bm);
         // Reset the loop counter for next while loop
-        int i = 0; 
+        i = 0; 
         while (i < bm->numPages)
         {
             // free each page frame's data
@@ -311,7 +332,7 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber
                                 return RC_WRITE_FAILED;
 
                             // Successful replacement, setup new frame
-                            setValue(pageNum, pageTable, pageFrame->framedIndex);
+                            setValue(pageTable, pageNum, pageFrame->framedIndex);
                             ensureCapacity(pageNum + 1, &(metadata->pageFile));
                             readBlock(pageNum, &(metadata->pageFile), pageFrame->data);
                             metadata->numberRead++;

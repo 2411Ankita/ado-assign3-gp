@@ -54,8 +54,7 @@ BM_PageFrame *getAfterEviction(BM_BufferPool *const bm, int frameIndex);
 /* Buffer Manager Interface Pool Handling */
 
 RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName, 
-		const int numPages, ReplacementStrategy strategy,
-		void *stratData)
+		const int numPages, ReplacementStrategy strategy, void *stratData)
 {
     // initialize the metadata
     BM_Metadata *metadata = (BM_Metadata *)malloc(sizeof(BM_Metadata));
